@@ -1,85 +1,73 @@
-# File: etl/scripts/export_ga4.py
+#!/usr/bin/env python3
 """
-Exports user-level GA4 features from BigQuery to a local CSV file.
+Enhanced ETL: export classification features + daily & hourly page-view series.
 
-Pre-requisites:
-  1. export GOOGLE_APPLICATION_CREDENTIALS="/path/to/your-key.json"
-  2. export GOOGLE_CLOUD_PROJECT="your-real-project-id"
-
-Run:
-  python export_ga4.py
+Raw CSV outputs go to: etl/data/raw/
 """
 
+from __future__ import annotations
 import os
+from pathlib import Path
 from typing import NoReturn
 
 import pandas as pd
 from google.cloud import bigquery
 from google.cloud.bigquery import Client
 
+# ────────────────────── Paths ────────────────────────────────────────────────
+ROOT    = Path(__file__).resolve().parent.parent           # etl/
+RAW_DIR = ROOT / "data" / "raw"
+RAW_DIR.mkdir(parents=True, exist_ok=True)
 
-def export_user_features(
-    client: Client,
-    sql_query: str,
-    output_path: str
-) -> pd.DataFrame:
+SQL_DIR = ROOT / "queries"
+
+# Map of dataset name → (SQL filename, output CSV path)
+FILES = {
+    "user_features":  ("user_features.sql",     RAW_DIR / "ga4_user_features.csv"),
+    "daily_series":   ("daily_pageviews.sql",   RAW_DIR / "daily_pageviews.csv"),
+    "hourly_series":  ("hourly_pageviews.sql",  RAW_DIR / "hourly_pageviews.csv"),
+}
+
+# ────────────────────── Helpers ────────────────────────────────────────────────
+def run_query(client: Client, sql_path: Path, out_csv: Path) -> pd.DataFrame:
     """
-    Execute the given SQL query against BigQuery and save the results to CSV.
+    Execute a SQL file against BigQuery and save the DataFrame to CSV.
 
     Args:
-        client (Client): BigQuery client initialized with a valid project.
-        sql_query (str): Query string to run in BigQuery.
-        output_path (str): Local file path for saving the CSV output.
+        client  (Client): Authenticated BigQuery client.
+        sql_path(Path)  : Path to the .sql query file.
+        out_csv (Path)  : Destination CSV path.
 
     Returns:
-        pd.DataFrame: The query results as a pandas DataFrame.
+        pd.DataFrame: The query results.
     """
-    job = client.query(sql_query)
+    with sql_path.open("r", encoding="utf-8") as f:
+        query: str = f.read()
+
+    job = client.query(query)
     df: pd.DataFrame = job.to_dataframe()  # type: ignore
 
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    df.to_csv(output_path, index=False)
-    print(f"✅ Data exported to {output_path} (rows: {df.shape[0]}, cols: {df.shape[1]})")
+    df.to_csv(out_csv, index=False)
+    print(f"✅  {out_csv.name:<22} rows={len(df):,}")
     return df
 
 
+# ────────────────────── Main ──────────────────────────────────────────────────
 def main() -> NoReturn:
-    """
-    Main entry point for the ETL script.
-    Ensures required environment variables are set, then runs the export.
-    """
-    # 1. Credentials for BigQuery
+    # 1. Check auth
     if not os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
-        raise EnvironmentError(
-            "🔴 Please set GOOGLE_APPLICATION_CREDENTIALS to your service account JSON key."
-        )
+        raise EnvironmentError("🔴 Set GOOGLE_APPLICATION_CREDENTIALS to your service-account JSON key")
 
-    # 2. GCP Project ID
-    project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
-    if not project_id:
-        raise EnvironmentError(
-            "🔴 Please set GOOGLE_CLOUD_PROJECT to your GCP project ID."
-        )
-
-    # 3. Initialize BigQuery client with the correct project
+    # 2. Determine GCP project
+    project_id = os.getenv("GOOGLE_CLOUD_PROJECT") or input("Enter GCP project ID: ")
     client: Client = bigquery.Client(project=project_id)
 
-    # 4. Load the SQL query
-    sql_path = os.path.join(
-        os.path.dirname(__file__),
-        "..", "queries", "user_features.sql"
-    )
-    with open(sql_path, "r", encoding="utf-8") as f:
-        sql_query: str = f.read()
+    # 3. Run exports
+    for name, (sql_fname, csv_path) in FILES.items():
+        sql_path = SQL_DIR / sql_fname
+        run_query(client, sql_path, csv_path)
 
-    # 5. Define output path
-    output_csv = os.path.join(
-        os.path.dirname(__file__),
-        "..", "data", "processed", "ga4_training_data.csv"
-    )
-
-    # 6. Run export
-    export_user_features(client, sql_query, output_csv)
+    print(f"\n🎉 All raw exports saved to: {RAW_DIR.resolve()}")
 
 
 if __name__ == "__main__":
