@@ -52,11 +52,11 @@ DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
     },
     "lstm": {
         # Use past week (168 hours) as look-back window
-        "units": 168,
-        "dropout": 0.2,
-        "epochs": 20,
-        "batch_size": 32,
-        "learning_rate": 1e-3,
+        "units": 144,
+        "dropout": 0.07559660635013106,
+        "epochs": 28,
+        "batch_size": 28,
+        "learning_rate": 0.004091695609749729,
         "random_state": 42
     }
 }
