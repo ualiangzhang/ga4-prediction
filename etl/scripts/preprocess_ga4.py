@@ -25,16 +25,16 @@ import numpy as np
 import pandas as pd
 
 # ─── Directories ───────────────────────────────────────────────────────────────
-ROOT_DIR = Path(__file__).resolve().parent.parent       # etl/
-RAW_DIR  = ROOT_DIR / "data" / "raw"
+ROOT_DIR = Path(__file__).resolve().parent.parent  # etl/
+RAW_DIR = ROOT_DIR / "data" / "raw"
 PROC_DIR = ROOT_DIR / "data" / "processed"
 PROC_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ─── Classification Preprocessing ─────────────────────────────────────────────
 def preprocess_classification(
-    raw_csv: Path,
-    out_csv: Path
+        raw_csv: Path,
+        out_csv: Path
 ) -> pd.DataFrame:
     """
     Load raw user features, clean and export classification dataset.
@@ -72,8 +72,8 @@ def preprocess_classification(
 
 # ─── Daily Time-Series Preprocessing ──────────────────────────────────────────
 def preprocess_daily_series(
-    raw_csv: Path,
-    out_csv: Path
+        raw_csv: Path,
+        out_csv: Path
 ) -> pd.DataFrame:
     """
     Load raw daily page views, reindex to continuous dates, and export.
@@ -103,8 +103,8 @@ def preprocess_daily_series(
 
 # ─── Hourly Time-Series Preprocessing ─────────────────────────────────────────
 def preprocess_hourly_series(
-    raw_csv: Path,
-    out_csv: Path
+        raw_csv: Path,
+        out_csv: Path
 ) -> pd.DataFrame:
     """
     Load raw hourly page views, reindex to continuous hours, and export.
@@ -138,14 +138,14 @@ def main() -> NoReturn:
     Execute preprocessing for classification, daily and hourly series.
     """
     # Define paths
-    class_raw   = RAW_DIR / "ga4_user_features.csv"
-    class_out   = PROC_DIR / "ga4_training_data.csv"
+    class_raw = RAW_DIR / "ga4_user_features.csv"
+    class_out = PROC_DIR / "ga4_training_data.csv"
 
-    daily_raw   = RAW_DIR / "daily_pageviews.csv"
-    daily_out   = PROC_DIR / "daily_pageviews.csv"
+    daily_raw = RAW_DIR / "daily_pageviews.csv"
+    daily_out = PROC_DIR / "daily_pageviews.csv"
 
-    hourly_raw  = RAW_DIR / "hourly_pageviews.csv"
-    hourly_out  = PROC_DIR / "hourly_pageviews.csv"
+    hourly_raw = RAW_DIR / "hourly_pageviews.csv"
+    hourly_out = PROC_DIR / "hourly_pageviews.csv"
 
     # Run each preprocessing step
     preprocess_classification(class_raw, class_out)

@@ -2,157 +2,181 @@
 # File: src/classification/predict.py
 
 """
-Load a trained GA4 conversion prediction model and run inference on new data.
+Run inference with a trained GA4 conversion model.
+
+Models and their params live under:
+    models/classification/
+
+Defaults:
+  - XGBoost:        models/classification/xgb_model.pkl
+  - RandomForest:   models/classification/rf_model.pkl
+  - LogisticRegress:models/classification/lr_model.pkl
+  - Keras DNN:      models/classification/dnn_model.h5
 
 Usage:
-  # Use defaults (expects etl/data/processed/ga4_training_data.csv under project root)
+  # Default (XGBoost):
   python predict.py
 
-  # Override input data, model file, and output path
-  python predict.py \
-    --data /path/to/new_data.csv \
-    --model-file /path/to/models/rf_model.pkl \
-    --output /path/to/predictions.csv
+  # RandomForest:
+  python predict.py --model-type rf
+
+  # Keras DNN:
+  python predict.py --model-type dnn
 """
 
+from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
-from typing import Union
+from typing import Union, Tuple
 
 import joblib
 import numpy as np
 import pandas as pd
 
-# ─── Setup Logging ────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    format="%(asctime)s %(levelname)s %(message)s",
-    level=logging.INFO
-)
+# ─── Logging Setup ────────────────────────────────────────────────────────────────
+logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 def load_data(csv_path: Union[str, Path]) -> pd.DataFrame:
     """
-    Load feature data from CSV for inference.
+    Load processed feature CSV for inference.
 
     Args:
-        csv_path (Union[str, Path]): Path to the CSV file containing features.
+        csv_path: Path to the CSV file.
 
     Returns:
-        pd.DataFrame: Loaded DataFrame.
+        DataFrame of features.
     """
-    path = Path(csv_path)
-    if not path.is_file():
-        raise FileNotFoundError(f"❌ Input data not found at: {path}")
-    logger.info(f"Loading inference data from {path}")
-    return pd.read_csv(path)
+    p = Path(csv_path)
+    if not p.is_file():
+        raise FileNotFoundError(f"Input file not found: {p}")
+    df = pd.read_csv(p)
+    logger.info(f"Loaded {len(df)} rows from {p}")
+    return df
 
 
 def preprocess_features(df: pd.DataFrame) -> np.ndarray:
     """
-    Prepare feature matrix for model prediction: drop ID/label, encode categoricals, fill missing.
+    Drop identifiers and labels, fill missing, and factorize categoricals.
 
     Args:
-        df (pd.DataFrame): Raw DataFrame containing columns:
-            - user_pseudo_id (optional)
-            - converted (optional label)
-            - num_pageviews, num_addtocart, num_sessions (numeric)
-            - device_type, traffic_source, country (categorical)
+        df: Raw feature DataFrame.
 
     Returns:
-        np.ndarray: Feature matrix with shape (n_samples, 6).
+        Feature matrix of shape (n_samples, n_features).
     """
     df_clean = df.copy()
-
-    # Drop identifier column
-    if "user_pseudo_id" in df_clean.columns:
-        df_clean.drop(columns=["user_pseudo_id"], inplace=True)
-        logger.debug("Dropped 'user_pseudo_id' column")
-
-    # Drop label column if present
-    if "converted" in df_clean.columns:
-        df_clean.drop(columns=["converted"], inplace=True)
-        logger.debug("Dropped 'converted' label column")
-
-    # Fill missing values
+    for col in ("user_pseudo_id", "converted"):
+        if col in df_clean:
+            df_clean.drop(columns=[col], inplace=True)
+            logger.debug(f"Dropped column '{col}'")
     df_clean.fillna("unknown", inplace=True)
-
-    # Encode categorical features
-    for col in ["device_type", "traffic_source", "country"]:
-        if col in df_clean.columns:
+    for col in ("device_type", "traffic_source", "country"):
+        if col in df_clean:
             df_clean[col], _ = pd.factorize(df_clean[col])
-            logger.debug(f"Factorized column '{col}'")
-
-    # Final feature matrix
+            logger.debug(f"Encoded '{col}'")
     X = df_clean.values
-    logger.info(f"Preprocessed features: shape {X.shape}")
+    logger.info(f"Feature matrix shape: {X.shape}")
     return X
+
+
+def predict_sklearn(model_file: Path, X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Load a sklearn .pkl model and predict probabilities & labels.
+
+    Args:
+        model_file: Path to a .pkl file.
+        X: Feature matrix.
+
+    Returns:
+        labels (0/1) and probability of class 1.
+    """
+    model = joblib.load(model_file)
+    logger.info(f"Loaded sklearn model from {model_file}")
+    proba = model.predict_proba(X)[:, 1]
+    labels = (proba >= 0.5).astype(int)
+    return labels, proba
+
+
+def predict_keras(model_file: Path, X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Load a Keras .h5 model and predict probabilities & labels.
+
+    Args:
+        model_file: Path to a .h5 Keras model.
+        X: Feature matrix.
+
+    Returns:
+        labels (0/1) and probability of class 1.
+    """
+    try:
+        from tensorflow.keras.models import load_model
+    except ImportError as e:
+        raise RuntimeError("TensorFlow/Keras is required for DNN inference") from e
+
+    model = load_model(model_file)
+    logger.info(f"Loaded Keras DNN from {model_file}")
+    proba = model.predict(X).ravel()
+    labels = (proba >= 0.5).astype(int)
+    return labels, proba
 
 
 def main() -> None:
     """
-    Parse args, load model & data, run predictions, and save results.
+    Parse arguments, run inference, and save predictions.
     """
-    # Defaults relative to project root
     project_root = Path(__file__).resolve().parent.parent.parent
     default_data = project_root / "etl" / "data" / "processed" / "ga4_training_data.csv"
-    default_model = project_root / "models" / "xgb_model.pkl"
+    classification_dir = project_root / "models" / "classification"
     default_output = project_root / "models" / "predictions.csv"
 
-    parser = argparse.ArgumentParser(
-        description="Run inference with a trained GA4 conversion model."
+    parser = argparse.ArgumentParser(description="GA4 conversion model inference")
+    parser.add_argument(
+        "--data", type=Path, default=default_data,
+        help="Input features CSV"
     )
     parser.add_argument(
-        "--data",
-        type=Path,
-        default=default_data,
-        help="Path to input CSV features (default: etl/data/processed/ga4_training_data.csv)"
+        "--model-type", type=str, default="dnn",
+        choices=["xgb", "rf", "lr", "dnn"],
+        help="Which model to use"
     )
     parser.add_argument(
-        "--model-file",
-        type=Path,
-        default=default_model,
-        help="Path to trained model pickle (default: models/xgb_model.pkl)"
+        "--model-file", type=Path,
+        help="Override model file path"
     )
     parser.add_argument(
-        "--output",
-        type=Path,
-        default=default_output,
-        help="Path to save predictions CSV (default: models/predictions.csv)"
+        "--output", type=Path, default=default_output,
+        help="Path to save predictions CSV"
     )
     args = parser.parse_args()
 
-    # Load features
+    # Determine model file
+    if args.model_file:
+        model_file = args.model_file
+    else:
+        ext = ".h5" if args.model_type == "dnn" else ".pkl"
+        model_file = classification_dir / f"{args.model_type}_model{ext}"
+    if not model_file.is_file():
+        raise FileNotFoundError(f"Model file not found: {model_file}")
+
+    # Load and preprocess features
     df = load_data(args.data)
     X = preprocess_features(df)
 
-    # Load model
-    if not args.model_file.is_file():
-        raise FileNotFoundError(f"❌ Model file not found at: {args.model_file}")
-    logger.info(f"Loading model from {args.model_file}")
-    model = joblib.load(args.model_file)
+    # Predict
+    if args.model_type == "dnn":
+        labels, proba = predict_keras(model_file, X)
+    else:
+        labels, proba = predict_sklearn(model_file, X)
 
-    # Predict probabilities and classes
-    logger.info("Running predictions...")
-    # Some models may not have predict_proba (but ours do)
-    try:
-        proba: np.ndarray = model.predict_proba(X)[:, 1]
-    except AttributeError:
-        logger.info("Model does not support predict_proba; using predict() for labels only")
-        labels = model.predict(X)
-        proba = labels.astype(float)
-    labels = (proba >= 0.5).astype(int)
-
-    # Attach predictions to DataFrame
-    result = df.copy()
-    result["predicted_proba"] = proba
-    result["predicted_label"] = labels
-
-    # Save results
+    # Append predictions and save
+    df["predicted_label"] = labels
+    df["predicted_proba"] = proba
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    result.to_csv(args.output, index=False)
-    logger.info(f"✅ Predictions saved to {args.output}")
+    df.to_csv(args.output, index=False)
+    logger.info(f"Predictions saved to {args.output}")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,5 @@
+{
+  "solver": "liblinear",
+  "C": 0.0074593432857265485,
+  "random_state": 42
+}

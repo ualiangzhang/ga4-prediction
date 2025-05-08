@@ -15,7 +15,7 @@ from google.cloud import bigquery
 from google.cloud.bigquery import Client
 
 # ────────────────────── Paths ────────────────────────────────────────────────
-ROOT    = Path(__file__).resolve().parent.parent           # etl/
+ROOT = Path(__file__).resolve().parent.parent  # etl/
 RAW_DIR = ROOT / "data" / "raw"
 RAW_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -23,10 +23,11 @@ SQL_DIR = ROOT / "queries"
 
 # Map of dataset name → (SQL filename, output CSV path)
 FILES = {
-    "user_features":  ("user_features.sql",     RAW_DIR / "ga4_user_features.csv"),
-    "daily_series":   ("daily_pageviews.sql",   RAW_DIR / "daily_pageviews.csv"),
-    "hourly_series":  ("hourly_pageviews.sql",  RAW_DIR / "hourly_pageviews.csv"),
+    "user_features": ("user_features.sql", RAW_DIR / "ga4_user_features.csv"),
+    "daily_series": ("daily_pageviews.sql", RAW_DIR / "daily_pageviews.csv"),
+    "hourly_series": ("hourly_pageviews.sql", RAW_DIR / "hourly_pageviews.csv"),
 }
+
 
 # ────────────────────── Helpers ────────────────────────────────────────────────
 def run_query(client: Client, sql_path: Path, out_csv: Path) -> pd.DataFrame:

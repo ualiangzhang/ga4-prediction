@@ -1,0 +1,4 @@
+{
+  "changepoint_prior_scale": 0.0011101021208737736,
+  "seasonality_mode": "additive"
+}
