@@ -10,16 +10,6 @@ Supported models and their default locations under models/timeseries/:
   - LSTM:    lstm_model.h5  (Keras)
 
 All arguments have sensible defaults; none are required.
-
-Usage examples:
-  # Forecast next 24 hours with ARIMA (default)
-  python predict.py
-
-  # Forecast with Prophet
-  python predict.py --model prophet
-
-  # Forecast with LSTM (requires TensorFlow/Keras)
-  python predict.py --model lstm --params-file models/timeseries/lstm_params.json
 """
 
 from __future__ import annotations
@@ -46,7 +36,7 @@ def load_series(csv_path: Path) -> pd.DataFrame:
         csv_path: Path to a CSV with columns ['ds', 'y'].
 
     Returns:
-        DataFrame sorted by 'ds', with datetime index column.
+        DataFrame sorted by 'ds'.
     """
     df = pd.read_csv(csv_path, parse_dates=["ds"])
     df.sort_values("ds", inplace=True)
@@ -69,7 +59,7 @@ def predict_arima(
         horizon: Number of hours to forecast.
 
     Returns:
-        DataFrame with columns ['ds','yhat'] for the forecast horizon.
+        DataFrame with columns ['ds','yhat'].
     """
     model = joblib.load(model_path)
     start = len(history)
@@ -99,7 +89,7 @@ def predict_prophet(
         horizon: Number of hours to forecast.
 
     Returns:
-        DataFrame with columns ['ds','yhat'] for the forecast horizon.
+        DataFrame with columns ['ds','yhat'].
     """
     m = joblib.load(model_path)  # type: ignore
     future = m.make_future_dataframe(periods=horizon, freq="H")
@@ -125,7 +115,7 @@ def predict_lstm(
         horizon: Number of hours to forecast.
 
     Returns:
-        DataFrame with columns ['ds','yhat'] for the forecast horizon.
+        DataFrame with columns ['ds','yhat'].
     """
     try:
         from tensorflow.keras.models import load_model
@@ -144,15 +134,15 @@ def predict_lstm(
         raise ValueError(f"Not enough history ({len(series)}) for window={window}")
     window_vals = series[-window:].copy().reshape(1, window, 1)
 
-    # Load the model
-    model = load_model(model_path)
+    # Load the model without compiling (avoids legacy loss errors)
+    model = load_model(model_path, compile=False)
     logger.info(f"Loaded Keras LSTM from {model_path}")
 
     # Iteratively forecast
     preds: list[float] = []
     for _ in range(horizon):
-        yhat = model.predict(window_vals, verbose=0)[0, 0]
-        preds.append(float(yhat))
+        yhat = float(model.predict(window_vals, verbose=0)[0, 0])
+        preds.append(yhat)
         window_vals = np.append(window_vals[:, 1:, :], [[[yhat]]], axis=1)
 
     last_ts = history["ds"].iloc[-1]
@@ -166,87 +156,39 @@ def predict_lstm(
 
 def main() -> None:
     """
-    Parse command-line arguments, run the selected model's forecast,
-    and write out the results.
+    CLI entry-point: parse args, run forecast, and save results.
     """
     project_root = Path(__file__).resolve().parent.parent.parent
     default_csv = project_root / "etl" / "data" / "processed" / "hourly_pageviews.csv"
     ts_model_dir = project_root / "models" / "timeseries"
     default_output = project_root / "models" / "timeseries_forecast.csv"
 
-    parser = argparse.ArgumentParser(
-        description="Forecast next N hours with a time-series model"
-    )
-    parser.add_argument(
-        "--data", "-d",
-        type=Path,
-        default=default_csv,
-        help=f"Historical CSV (default: {default_csv})"
-    )
-    parser.add_argument(
-        "--model", "-m",
-        choices=["arima", "prophet", "lstm"],
-        default="lstm",
-        help="Model type to use (default: arima)"
-    )
-    parser.add_argument(
-        "--model-file",
-        type=Path,
-        help="Override the model file path"
-    )
-    parser.add_argument(
-        "--params-file",
-        type=Path,
-        help="JSON params for LSTM (default: models/timeseries/lstm_params.json)"
-    )
-    parser.add_argument(
-        "--horizon", "-n",
-        type=int,
-        default=24,
-        help="Number of hours to forecast (default: 24)"
-    )
-    parser.add_argument(
-        "--output", "-o",
-        type=Path,
-        default=default_output,
-        help=f"Output CSV for forecast (default: {default_output})"
-    )
+    parser = argparse.ArgumentParser(description="Forecast next N hours with a TS model")
+    parser.add_argument("--data", "-d", type=Path, default=default_csv, help="Input CSV")
+    parser.add_argument("--model", "-m", choices=["arima", "prophet", "lstm"], default="arima")
+    parser.add_argument("--model-file", type=Path, help="Override model file path")
+    parser.add_argument("--params-file", type=Path, help="LSTM params JSON path")
+    parser.add_argument("--horizon", "-n", type=int, default=24, help="Hours to forecast")
+    parser.add_argument("--output", "-o", type=Path, default=default_output, help="Output CSV")
     args = parser.parse_args()
 
-    # Determine model file
-    if args.model_file:
-        model_path = args.model_file
-    else:
-        ext = ".h5" if args.model == "lstm" else ".pkl"
-        model_path = ts_model_dir / f"{args.model}_model{ext}"
-    if not model_path.is_file():
-        raise FileNotFoundError(f"Model file not found: {model_path}")
+    # Resolve paths
+    model_file = args.model_file or (ts_model_dir / f"{args.model}_model{'.h5' if args.model=='lstm' else '.pkl'}")
+    if not model_file.is_file():
+        raise FileNotFoundError(f"Model file not found: {model_file}")
 
-    # Determine params file for LSTM
-    if args.model == "lstm":
-        if args.params_file:
-            params_path = args.params_file
-        else:
-            params_path = ts_model_dir / "lstm_params.json"
-    else:
-        params_path = Path()  # unused
-
-    # Load historical series
+    params_file = args.params_file or (model_file.parent / "lstm_params.json")
     history = load_series(args.data)
 
-    # Predict
+    # Dispatch
     if args.model == "arima":
-        forecast = predict_arima(model_path, history, args.horizon)
+        forecast = predict_arima(model_file, history, args.horizon)
     elif args.model == "prophet":
-        forecast = predict_prophet(model_path, history, args.horizon)
+        forecast = predict_prophet(model_file, history, args.horizon)
     else:
-        forecast = predict_lstm(model_path, params_path, history, args.horizon)
+        forecast = predict_lstm(model_file, params_file, history, args.horizon)
 
-    # Save output
+    # Save
     args.output.parent.mkdir(parents=True, exist_ok=True)
     forecast.to_csv(args.output, index=False)
     logger.info(f"Saved forecast ({len(forecast)} rows) to {args.output}")
-
-
-if __name__ == "__main__":
-    main()
